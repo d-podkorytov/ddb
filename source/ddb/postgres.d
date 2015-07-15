@@ -2239,7 +2239,10 @@ version(Have_vibe_d)
 			m_params = conn_params.dup;
 			m_pool = new ConnectionPool!PGConnection(&createConnection);
 		}
-		
+
+		@property void maxConcurrency(uint val) { m_pool.maxConcurrency = val; }
+		@property uint maxConcurrency() { return m_pool.maxConcurrency; }
+
 		auto lockConnection() { return m_pool.lockConnection(); }
 		
 		private PGConnection createConnection()
