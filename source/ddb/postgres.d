@@ -1219,7 +1219,7 @@ class PGConnection
                     // ErrorResponse
                     ResponseMessage response = handleResponseMessage(msg);
                     sendSyncMessage();
-                    throw new ServerErrorException(response);
+                    throw new ServerErrorException("Could not execute query '" ~ query ~ "' => " ~ response.toString());
                 case '1':
                     // ParseComplete
                     return;
