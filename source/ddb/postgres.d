@@ -786,7 +786,8 @@ enum string[int] baseTypes = [
     20 : "int8",
     700 : "float4",
     701 : "float8",
-    1700 : "numeric"
+    1700 : "numeric",
+	1114: "timestamp"
 ];
 
 public:
@@ -806,7 +807,13 @@ enum PGType : int
     INT4 = 23,
     INT8 = 20,
     FLOAT4 = 700,
-    FLOAT8 = 701
+    FLOAT8 = 701,
+	NUMERIC = 1700,
+	TIMESTAMP = 1114,
+	INET = 869,
+	JSONB = 3802,
+	INTERVAL = 1186
+
 };
 
 class ParamException : Exception
@@ -1086,6 +1093,13 @@ class PGConnection
                     case PGType.INT4: checkParam!int(4); break;
                     case PGType.INT8: checkParam!long(8); break;
                     case PGType.TEXT:
+				case PGType.BOOLEAN:
+				case PGType.TIMESTAMP:
+				case PGType.VARCHAR:
+				case PGType.INET:
+				case PGType.NUMERIC:
+				case PGType.JSONB:
+				case PGType.INTERVAL:
                         paramsLen += param.value.coerce!string.length;
                         hasText = true;
                         break;
@@ -1104,7 +1118,8 @@ class PGConnection
             {
                 stream.write(cast(short) params.length);
                 foreach(param; params)
-                    if(param.type == PGType.TEXT)
+                    if(param.type == PGType.TEXT || param.type == PGType.INET || param.type == PGType.VARCHAR || param.type == PGType.TIMESTAMP
+					|| param.type == PGType.NUMERIC || param.type == PGType.BOOLEAN || param.type == PGType.JSONB || param.type == PGType.INTERVAL)
                         stream.write(cast(short) 0); // text format
                     else
                         stream.write(cast(short) 1); // binary format
@@ -1116,9 +1131,9 @@ class PGConnection
             
             foreach (param; params)
             {
-                if (param.value == null)
+				if (param.value.coerce!string == null)
                 {
-                    stream.write(-1);
+                    stream.write(cast(int)-1);
                     continue;
                 }
                 
@@ -1137,7 +1152,18 @@ class PGConnection
                         stream.write(param.value.coerce!long);
                         break;
                     case PGType.TEXT:
+				case PGType.BOOLEAN:
+				case PGType.TIMESTAMP:
+				case PGType.VARCHAR:
+				case PGType.INET:
+				case PGType.NUMERIC:
+				case PGType.JSONB:
+				case PGType.INTERVAL:
                         auto s = param.value.coerce!string;
+						if (!s) {
+							stream.write(cast(int)0);
+							continue;
+						}
                         stream.write(cast(int) s.length);
                         stream.write(cast(ubyte[]) s);
                         break;
@@ -1862,6 +1888,15 @@ class PGParameters
         changed = true;
         return params[index] = new PGParameter(this, index, type);
     }
+
+	PGParameters bind(T)(short index, PGType type, T value)
+	{
+		enforce(!cmd.prepared, "Can't add parameter to prepared statement.");
+		changed = true;
+		params[index] = new PGParameter(this, index, type);
+		params[index].value = value;
+		return this;
+	}
     
     // todo: remove()
     
@@ -2148,7 +2183,10 @@ class PGResultSet(Specs...)
                 columnMap[field.name] = [i];
         }
     }
-    
+	~this() { 
+		if (conn && conn.activeResultSet)
+			close(); 
+	}
     private size_t columnToIndex(string column, size_t index)
     {
         size_t[]* indices = column in columnMap;
