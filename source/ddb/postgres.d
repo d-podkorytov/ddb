@@ -947,7 +947,6 @@ class ResponseMessage
         string* hint = 'H' in fields;
         if (hint)
             s ~= "\nHINT: " ~ *hint;
-        
         return s;
     }
 }
@@ -1044,8 +1043,15 @@ class PGConnection
         void sendParseMessage(string statementName, string query, int[] oids)
         {
             int len = cast(int)(4 + statementName.length + 1 + query.length + 1 + 2 + oids.length * 4);
-
-            stream.write('P');
+			bool failed;
+            try stream.write('P');
+			catch (Exception e) {
+				failed = true;
+			}
+			if (failed) {
+				close();
+				throw new Exception("Error in parse: " ~ statementName ~ " query: " ~ query);
+			}
             stream.write(len);
             stream.writeCString(statementName);
             stream.writeCString(query);
@@ -1093,13 +1099,13 @@ class PGConnection
                     case PGType.INT4: checkParam!int(4); break;
                     case PGType.INT8: checkParam!long(8); break;
                     case PGType.TEXT:
-				case PGType.BOOLEAN:
-				case PGType.TIMESTAMP:
-				case PGType.VARCHAR:
-				case PGType.INET:
-				case PGType.NUMERIC:
-				case PGType.JSONB:
-				case PGType.INTERVAL:
+					case PGType.BOOLEAN:
+					case PGType.TIMESTAMP:
+					case PGType.VARCHAR:
+					case PGType.INET:
+					case PGType.NUMERIC:
+					case PGType.JSONB:
+					case PGType.INTERVAL:
                         paramsLen += param.value.coerce!string.length;
                         hasText = true;
                         break;
@@ -1141,15 +1147,15 @@ class PGConnection
                 {
                     case PGType.INT2:
                         stream.write(cast(int)2);
-                        stream.write(param.value.coerce!short);
+                        stream.write(param.value.get!short);
                         break;
                     case PGType.INT4:
                         stream.write(cast(int)4);
-                        stream.write(param.value.coerce!int);
+                        stream.write(param.value.get!int);
                         break;
                     case PGType.INT8:
                         stream.write(cast(int)8);
-                        stream.write(param.value.coerce!long);
+                        stream.write(param.value.get!long);
                         break;
                     case PGType.TEXT:
 				case PGType.BOOLEAN:
@@ -1245,7 +1251,19 @@ class PGConnection
                     // ErrorResponse
                     ResponseMessage response = handleResponseMessage(msg);
                     sendSyncMessage();
-                    throw new ServerErrorException("Could not execute query '" ~ query ~ "' => " ~ response.toString());
+
+					string details = response.toString();
+					string* pos = 'P' in response.fields;
+					if (pos && (*pos).to!size_t < query.length) {
+						size_t idx = (*pos).to!size_t;
+						size_t start;
+						if (idx > 10)
+							start = idx - 10;
+						else start = 0;
+						size_t end = min(query.length, idx + 20);
+						details ~= "\n'" ~ query[start .. end].replace("\t", " ").replace("\n", " ").to!string ~ "'\n          ^";
+					}
+                    throw new ServerErrorException("Could not execute query '" ~ query ~ "' => " ~ details);
                 case '1':
                     // ParseComplete
                     return;
@@ -1298,6 +1316,7 @@ class PGConnection
                     // ErrorResponse
                     ResponseMessage response = handleResponseMessage(msg);
                     sendSyncMessage();
+
                     throw new ServerErrorException(response);
                 case '3':
                     // CloseComplete
@@ -1690,7 +1709,9 @@ class PGConnection
                     goto receive;
             }
         }
-
+		@property bool connected() {
+			return stream.socket.connected;
+		}
         /// Closes current connection to the server.
         void close()
         {
@@ -1729,9 +1750,8 @@ class PGConnection
         void reloadArrayTypes()
         {
             auto cmd = new PGCommand(this, "SELECT oid, typelem FROM pg_type WHERE typcategory = 'A'");
-            auto result = cmd.executeQuery!(uint, "arrayOid", uint, "elemOid");
-            scope(exit) result.close;
-            
+			auto result = cmd.executeQuery!(uint, "arrayOid", uint, "elemOid");
+			scope(exit) result.destroy();
             arrayTypes = null;
             
             foreach (row; result)
@@ -1747,8 +1767,8 @@ class PGConnection
             auto cmd = new PGCommand(this, "SELECT a.attrelid, a.atttypid FROM pg_attribute a JOIN pg_type t ON 
                                      a.attrelid = t.typrelid WHERE a.attnum > 0 ORDER BY a.attrelid, a.attnum");
             auto result = cmd.executeQuery!(uint, "typeOid", uint, "memberOid");
-            scope(exit) result.close;
-
+		scope(exit) result.destroy();
+		
             compositeTypes = null;
             
             uint lastOid = 0;
@@ -1772,8 +1792,8 @@ class PGConnection
         {
             auto cmd = new PGCommand(this, "SELECT enumtypid, oid, enumlabel FROM pg_enum ORDER BY enumtypid, oid");
             auto result = cmd.executeQuery!(uint, "typeOid", uint, "valueOid", string, "valueLabel");
-            scope(exit) result.close;
-            
+		scope(exit) result.destroy();
+		
             enumTypes = null;
             
             uint lastOid = 0;
@@ -2112,8 +2132,8 @@ class PGCommand
     DBRow!Specs executeRow(Specs...)(bool throwIfMoreRows = true)
     {
         auto result = executeQuery!Specs();
-        scope(exit) result.close();
-        enforce(!result.empty(), "Result doesn't contain any rows.");
+		scope(exit) result.destroy();
+		enforce(!result.empty(), "Result doesn't contain any rows.");
         auto row = result.front();
         if (throwIfMoreRows)
         {
@@ -2140,8 +2160,8 @@ class PGCommand
     T executeScalar(T = Variant)(bool throwIfMoreRows = true)
     {
         auto result = executeQuery!T();
-        scope(exit) result.close();
-        enforce(!result.empty(), "Result doesn't contain any rows.");
+		scope(exit) result.destroy();
+		enforce(!result.empty(), "Result doesn't contain any rows.");
         T row = result.front();
         if (throwIfMoreRows)
         {
@@ -2184,8 +2204,9 @@ class PGResultSet(Specs...)
         }
     }
 	~this() { 
-		if (conn && conn.activeResultSet)
+		if (conn && conn.activeResultSet) {
 			close(); 
+		}
 	}
     private size_t columnToIndex(string column, size_t index)
     {
