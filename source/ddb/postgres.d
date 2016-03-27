@@ -1,4 +1,4 @@
-module ddb.postgres;
+	module ddb.postgres;
 
 /**
 PostgreSQL client implementation.
@@ -175,6 +175,8 @@ import std.algorithm;
 import std.stdio;
 import std.datetime;
 import std.uuid;
+import memutils.utils : ThreadMem;
+import memutils.vector;
 public import ddb.db;
 
 private:
@@ -189,12 +191,15 @@ class PGStream
 	private {
 		version (Have_vibe_d) TCPConnection m_socket;
 		else SocketStream m_socket;
+		Vector!ubyte m_bytes;
 	}
 	version (Have_vibe_d){
 		@property TCPConnection socket() { return m_socket; }
 		this(TCPConnection socket)
 	    {
+			if (socket) socket.tcpNoDelay = true;
 			m_socket = socket;
+			m_bytes.reserve(512);
 	    }
 	}else{
 		@property SocketStream socket() { return m_socket; }
@@ -203,14 +208,18 @@ class PGStream
 		}
 	}
 
-
+	void flush() {
+		if (m_bytes.length > 0)
+			m_socket.write(m_bytes[]);
+		m_bytes.length = 0;
+	}
 	/*
 	 * I'm not too sure about this function
 	 * Should I keep the length?
 	 */	
 	void write(ubyte[] x)
 	{
-		m_socket.write(x);
+		m_bytes.insert(x);
 	}
 	
 	void write(ubyte x)
@@ -979,7 +988,8 @@ class PGConnection
         
         Message getMessage()
         {
-
+			stream.flush();
+		
             char type;
             int len;
 			ubyte[1] ub;
@@ -1028,7 +1038,7 @@ class PGConnection
                 stream.writeCString(key);
                 stream.writeCString(value);
             }
-		stream.write(cast(ubyte)0);
+			stream.write(cast(ubyte)0);
 	}
         
         void sendPasswordMessage(string password)
@@ -1067,13 +1077,14 @@ class PGConnection
             stream.write(cast(int)(4 + 1 + name.length + 1));
             stream.write(cast(char)type);
             stream.writeCString(name);
-        }
+	}
         
         void sendTerminateMessage()
 		{
 			stream.write('X');
             stream.write(cast(int)4);
-        }
+			stream.flush();
+	}
 
         void sendBindMessage(string portalName, string statementName, PGParameters params)
         {
@@ -1204,13 +1215,15 @@ class PGConnection
 		{
 			stream.write('H');
             stream.write(cast(int)4);
+			stream.flush();
         }
 
         void sendSyncMessage()
 		{
 			stream.write('S');
             stream.write(cast(int)4);
-        }
+			stream.flush();
+	}
         
         ResponseMessage handleResponseMessage(Message msg)
         {
