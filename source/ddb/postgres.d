@@ -652,7 +652,11 @@ struct Message
                 else
                     throw convError!T();
             case 17: // bytea
-                static if (isConvertible!(T, ubyte[]))
+				static if (is(T == ubyte[]))
+					return read!(ubyte[])(len);
+				else static if (is(T == string))
+					return cast(string) read!ubyte[](len);
+				else static if (isConvertible!(T, ubyte[]))
                     return _to!T(read!(ubyte[])(len));
                 else
                     throw convError!T();
