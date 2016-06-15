@@ -189,18 +189,26 @@ const PGEpochDateTime = DateTime(2000, 1, 1, 0, 0, 0);
 class PGStream
 {
 	private {
-		version (Have_vibe_d) TCPConnection m_socket;
+		version (Have_vibe_d) {
+			ConnectionStream m_socket;
+		}
 		else SocketStream m_socket;
 		Vector!ubyte m_bytes;
 	}
 	version (Have_vibe_d){
-		@property TCPConnection socket() { return m_socket; }
+		@property ConnectionStream socket() { return m_socket; }
 		this(TCPConnection socket)
-	    {
+		{
 			if (socket) socket.tcpNoDelay = true;
 			m_socket = socket;
 			m_bytes.reserve(512);
-	    }
+		}
+		this(UDSConnection socket)
+		{
+			m_socket = socket;
+			m_bytes.reserve(512);
+		}
+
 	}else{
 		@property SocketStream socket() { return m_socket; }
 		this(SocketStream socket){
@@ -737,8 +745,8 @@ template _to(T)
 {
     static if (isVariantN!T)
         T _to(S)(S value) { T t = value; return t; }
-    else
-        T _to(A...)(A args) { return toImpl!T(args); }
+	else 
+		T _to(A...)(A args) { static if (is(A == T)) return args; else return to!T(args); }
 }
 
 template isConvertible(T, S)
@@ -1618,7 +1626,10 @@ class PGConnection
             ushort port = "port" in params? parse!ushort(p["port"]) : 5432;
             
 			 version(Have_vibe_d){
-				stream = new PGStream(connectTCP(params["host"], port));
+				if (params["host"].startsWith("/"))
+					stream = new PGStream(connectUDS(params["host"]));
+				else
+					stream = new PGStream(connectTCP(params["host"], port));
 			} else {
 				stream = new PGStream(new SocketStream(new TcpSocket));
 				stream.socket.socket.connect(new InternetAddress(params["host"], port));
