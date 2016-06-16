@@ -1626,10 +1626,12 @@ class PGConnection
             ushort port = "port" in params? parse!ushort(p["port"]) : 5432;
             
 			 version(Have_vibe_d){
-				if (params["host"].startsWith("/"))
-					stream = new PGStream(connectUDS(params["host"]));
-				else
-					stream = new PGStream(connectTCP(params["host"], port));
+				version(linux) {
+					if (params["host"].startsWith("/"))
+						stream = new PGStream(connectUDS(params["host"]));
+					else
+						stream = new PGStream(connectTCP(params["host"], port));
+				} else stream = new PGStream(connectTCP(params["host"], port));
 			} else {
 				stream = new PGStream(new SocketStream(new TcpSocket));
 				stream.socket.socket.connect(new InternetAddress(params["host"], port));
